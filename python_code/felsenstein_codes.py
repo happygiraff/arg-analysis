@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.linalg import expm
+from collections import defaultdict
+from python_code.data_utils import haplotype_columns
 
 # explicit calculation of the transition matrix for a continuous-time Markov chain
 def calculate_transition_matrix(mu, num_states = 2):
@@ -176,3 +178,66 @@ def felsenstein_backwards_general(tree, tip_states, bases=(0, 1), mutation_rate=
 
             
     return likelihoods, states, path_probability, num_mutations
+
+
+def snps_by_tree_index(ts, snp_positions):
+    """
+    Map SNP positions to their tree indices, excluding invalid or empty trees. This is used to cut down calculation time on Felsenstein since multiple SNPs may 
+    be associated to the same tree.
+
+    Parameters
+    ----------
+    ts : tskit.TreeSequence
+        Tree sequence containing the trees and sequence boundaries.
+    snp_positions : array-like
+        Genomic positions of SNPs to assign to trees.
+
+    Returns
+    -------
+    dict
+        Mapping from tree index to the list of SNP positions in that tree.
+    """
+
+    positions = np.asarray(snp_positions)
+
+    breakpoints = ts.breakpoints(as_array=True)
+    tree_indices = np.searchsorted(breakpoints, positions, side="right") - 1
+
+    # skip SNPs outside the sequence, or on a tree with no edges (e.g. before Relate's first tree, in masked relate regions, or snps that are left out at the end of the chromosome)
+    inside = (positions >= 0) & (positions < ts.sequence_length)
+    empty = np.array([tree.num_edges == 0 for tree in ts.trees()])
+    keep = inside.copy()
+    keep[inside] = ~empty[tree_indices[inside]]
+    if not keep.all():
+        print(f"skipped {(~keep).sum()} SNPs outside the sequence or on empty trees")
+
+    result = defaultdict(list)
+    for tree_index, pos in zip(tree_indices[keep].tolist(), positions[keep].tolist()):
+        result[tree_index].append(pos)
+
+    return dict(result)
+
+
+def tip_states_at(df, pos):
+    """
+    Get the 0/1 tip states for the SNP at some positon `pos`. This is fed into the Felsensetin general alg.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing an "SNP position" column and haplotype columns.
+    pos : float or int
+        Genomic position of the SNP to retrieve.
+
+    Returns
+    -------
+    dict
+        Mapping from sample/haplotype node number to its 0/1 state.
+    """
+    
+    hap_cols = haplotype_columns(df) # get only the 0/1 haplotype columns
+    row = df.loc[df["SNP position"] == pos, hap_cols]
+    if len(row) != 1:
+        raise ValueError(f"{len(row)} rows at position {pos}")
+    haps = row.to_numpy().ravel().astype(int)
+    return dict(enumerate(haps))      # {hap 0: state, hap 1: state, ...}
