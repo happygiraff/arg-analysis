@@ -89,13 +89,32 @@ def felsenstein_backwards_jc(tree, tip_states):
 
 
 # general felsenstein function that can handle any number of states, including 0/1 and ACTG. We can also impose the root to be the ancestral state
-def felsenstein_backwards_general(tree, tip_states, bases=(0, 1), mu= None, root_state = None):
-    "felsenstein algorithm to calculate the likelihood of the tree given the tip states"
+def felsenstein_backwards_general(tree, tip_states, bases=(0, 1), mutation_rate= 1.0, root_state = None):
+    """
+    Calculate the likelihood of the tip states using Felsenstein's algorithm.
+
+    Parameters
+    ----------
+    tree : tskit.Tree
+        Tree on which to calculate the likelihood.
+    tip_states : dict
+        Mapping from tip node IDs to observed states.
+    bases : sequence, default (0, 1). can use ACTG etc
+        Possible states, in the order used by the transition matrix.
+    mutation_rate : float, optional
+        Mutation rate. This will be divided by number of states -1 to get mu, transition of switching from state to state
+    root_state : optional
+        If None, average over root states using the root prior.
+        Otherwise, condition on this root state; must belong to bases.
+
+    Returns
+    -------
+    likelihoods, states, path_probability, num_mutations
+    """
 
     num_states = len(bases) 
     base_index = {b: i for i, b in enumerate(bases)}   # label -> row/column in P
-    if mu is None:
-        mu = 1 / (num_states - 1)
+    mu = mutation_rate / (num_states - 1)
     Q = calculate_transition_matrix(mu, num_states)
 
     likelihoods = {}  # Dictionary to store likelihoods for each node
@@ -137,13 +156,15 @@ def felsenstein_backwards_general(tree, tip_states, bases=(0, 1), mu= None, root
     root = tree.root
     if root_state is None:
         root_scores = (1/num_states) * best[root]
+        root_index = root_scores.argmax()                    
     else:
+        root_index = base_index[root_state]                  
         root_scores = np.zeros(num_states)
-        root_scores[base_index[root_state]] = best[root][base_index[root_state]]
-    path_probability = root_scores.max()
+        root_scores[root_index] = best[root][root_index]
+    path_probability = root_scores[root_index]               
 
     # joint: traceback from the root to the leaves, reading off the stored choices
-    states = {root: bases[root_scores.argmax()]}
+    states = {root: bases[root_index]}                       # CHANGED (was root_scores.argmax())
     num_mutations = 0
     for u in tree.nodes(order="preorder"):
         if u != root:
